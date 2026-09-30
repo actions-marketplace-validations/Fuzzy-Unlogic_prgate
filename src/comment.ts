@@ -1,20 +1,17 @@
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import type { getOctokit } from '@actions/github';
 import type { MatchedFile } from './match';
 
 type Octokit = ReturnType<typeof getOctokit>;
 
-/** Hidden HTML marker used to find (and thus upsert) the single PR Gate comment. */
 export const COMMENT_MARKER = '<!-- pr-gate:comment -->';
 
-/** Status → emoji badge shown in the comment table. */
 const STATUS_BADGE: Record<MatchedFile['status'], string> = {
   CREATED: '🟢',
   MODIFIED: '🟡',
   REMOVED: '🔴',
 };
 
-/** Inputs needed to render the sticky comment body. */
 export interface RenderOptions {
   matched: MatchedFile[];
   isHardBlocker: boolean;
@@ -22,8 +19,8 @@ export interface RenderOptions {
   owner: string;
   repo: string;
   prNumber: number;
-  /** Base server URL, e.g. `https://github.com` (supports GitHub Enterprise). */
   serverUrl: string;
+  updateNotice?: string | null;
 }
 
 /**
@@ -52,7 +49,8 @@ export function diffUrl(opts: {
  * Always leads with the hidden marker so the comment can be found and updated in place.
  */
 export function renderComment(opts: RenderOptions): string {
-  const { matched, isHardBlocker, approvalLabel, owner, repo, prNumber, serverUrl } = opts;
+  const { matched, isHardBlocker, approvalLabel, owner, repo, prNumber, serverUrl, updateNotice } =
+    opts;
 
   const rows = matched
     .map((file) => {
@@ -84,6 +82,10 @@ export function renderComment(opts: RenderOptions): string {
     );
   }
 
+  if (updateNotice) {
+    lines.push('', `> ℹ️ ${updateNotice}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -93,10 +95,6 @@ export interface CommentTarget {
   prNumber: number;
 }
 
-/**
- * Find the existing PR Gate comment (identified by {@link COMMENT_MARKER}) if any.
- * Returns its id, or undefined when none exists.
- */
 async function findExistingComment(
   octokit: Octokit,
   target: CommentTarget,

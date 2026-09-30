@@ -1,9 +1,5 @@
 # PR Gate
 
-> **v1.0.0-alpha — pre-release MVP.** Minimal, deterministic scope, still stabilizing.
-> Pin the exact pre-release tag (`@v1.0.0-alpha`); the floating `v1` tag is reserved for
-> the first stable release. See [Roadmap](#roadmap).
-
 A **language-agnostic** GitHub Action that detects when a pull request touches files a
 project has declared **"protected"** (tests, lint config, CI workflows, project config,
 etc.) and surfaces them for **mandatory human review** — deterministically, with **zero
@@ -14,18 +10,40 @@ AI/agentic logic in the check itself**.
 AI coding agents silently weaken or delete the guardrails that protect a codebase —
 tests, lint rules, CI. **PR Gate makes any such change loud** and, optionally, blocking.
 
+![PR Gate sticky comment listing protected files that changed, each with a status badge and a "View diff" link](docs/assets/pr-gate-comment.png)
+
+## Installation
+
+Just tell your agent AI to install and configure PR Gate. Example:
+
+```md
+Install and configure PR Gate Action from Github
+```
+
+Following steps should be followed by your agent:
+
+It will follow [`docs/prgate-install.md`](docs/prgate-install.md) — scanning your repo for
+guardrail-type files, **presenting them to you as a checklist** (the human chooses; the
+agent must not decide), copying the workflow template, writing `guardrails.prgate.json`,
+and opening a PR for your approval.
+
+Will be generated the file `.github/workflows/pr-gate.yml` that is the action itself:
+
+Will be also generated [`docs/templates/guardrails.prgate.json`](docs/templates/guardrails.prgate.json)
+that contains the protected files and settings for PR Gate
+
+
 ## What PR Gate is / is not
 
-**Core principles (non-negotiable):**
-
 1. **Deterministic.** Same PR + same config ⇒ same result, always. No LLM calls, no
-   heuristics, no network beyond the GitHub API. This is the product's whole value.
+   heuristics, no network beyond the GitHub API.
 2. **Language / tech agnostic.** The engine only reasons about file paths and glob
    patterns. It never assumes JavaScript, npm, or any framework.
 3. **Config-driven.** All project-specific behavior comes from a single JSON file.
 
 PR Gate **is** a gate for human attention. It is **not** a linter, a test runner, or a
-replacement for SonarQube — it does not inspect file _contents_, only _paths_.
+replacement for code quality tools.
+
 
 ## How it works
 
@@ -34,6 +52,9 @@ On each pull request, PR Gate:
 1. Reads and validates `guardrails.prgate.json` at your repo root. Missing → it passes
    silently (you haven't opted in).
 2. Compares the PR's changed file paths against your `protected` globs (minimatch syntax).
+   The config file itself (`guardrails.prgate.json`, or whatever `config-path` points at)
+   is **always guarded implicitly** — you never list it, and a PR can't quietly weaken,
+   rename, or delete the gate in the same change.
 3. **If ≥1 protected file changed:** posts (or updates) a **single sticky comment** with
    a warning banner and a table — one row per matched file with a status badge
    (🟢 `CREATED` / 🟡 `MODIFIED` / 🔴 `REMOVED`) and a **View diff ↗** link.
@@ -42,68 +63,6 @@ On each pull request, PR Gate:
    - `is_hard_blocker: false` (default) → **always passes** (advisory comment only).
    - `is_hard_blocker: true` → **fails** (blocking merge via branch protection) until a
      user with **write access** applies the approval label; then it passes.
-
----
-
-## Quick start
-
-### 1. Add the workflow
-
-Copy [`docs/templates/pr-gate.yml`](docs/templates/pr-gate.yml) to
-`.github/workflows/pr-gate.yml`:
-
-```yaml
-name: PR Gate
-
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled, unlabeled]
-
-permissions:
-  contents: read
-  pull-requests: write
-
-jobs:
-  pr-gate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: Fuzzy-Unlogic/prgate@v1.0.0-alpha
-```
-
-> Pin to a full commit SHA (`Fuzzy-Unlogic/prgate@<sha>`) for stronger
-> supply-chain safety.
-
-### 2. Create `guardrails.prgate.json`
-
-At your repo root. Copy [`docs/templates/guardrails.prgate.json`](docs/templates/guardrails.prgate.json)
-and edit the `protected` globs, or start from:
-
-```jsonc
-{
-  "$schema": "https://raw.githubusercontent.com/Fuzzy-Unlogic/prgate/v1.0.0-alpha/schema/guardrails.schema.json",
-  "guardrails": {
-    "protected": ["tests/**", "**/*.spec.ts", ".github/workflows/**", ".eslintrc*"],
-    "source_of_truth": [],
-    "is_hard_blocker": false
-  }
-}
-```
-
-The optional `$schema` line gives you **validation and autocomplete** in editors like
-VS Code (see [`schema/guardrails.schema.json`](schema/guardrails.schema.json)).
-
-That's it. Open a PR that touches one of those paths and PR Gate will comment.
-
-### Simplified agentic install
-
-Don't want to pick paths by hand? **Tell your AI coding agent:**
-
-> **configure prgate**
-
-It will follow [`docs/prgate-install.md`](docs/prgate-install.md) — scanning your repo for
-guardrail-type files, **presenting them to you as a checklist** (the human chooses; the
-agent must not decide), copying the workflow template, writing `guardrails.prgate.json`,
-and opening a PR for your approval.
 
 ---
 
@@ -116,7 +75,7 @@ top-level `guardrails` key. Unknown keys are ignored with a warning. A
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `protected` | `string[]` | `[]` | Glob patterns ([minimatch](https://github.com/isaacs/minimatch) syntax) matched against changed file paths. Empty ⇒ nothing is guarded (passes silently). |
+| `protected` | `string[]` | `[]` | Glob patterns ([minimatch](https://github.com/isaacs/minimatch) syntax) matched against changed file paths. The config file itself is always guarded implicitly, so even an empty list still catches edits to `guardrails.prgate.json`. |
 | `source_of_truth` | `string[]` | `[]` | **POST-MVP.** Parsed and shape-validated, but **not enforced** in this version. |
 | `is_hard_blocker` | `boolean` | `false` | `false` = advisory comment only. `true` = the check fails until the approval label is applied by a write-access user. |
 
@@ -148,6 +107,7 @@ content-level. The engine makes no language assumptions.
 | `github-token` | `${{ github.token }}` | Token used to read the PR, post the comment, and verify labeler permissions. |
 | `config-path` | `guardrails.prgate.json` | Path to the config, relative to the repo root. |
 | `approval-label` | `prgate-approved` | Label a write-access user applies to unblock a hard-blocked PR. |
+| `version-check` | `true` | When `true`, warn (never fail) if a newer PR Gate release is available. See [Staying up to date](#staying-up-to-date). |
 
 ### Action outputs
 
@@ -184,6 +144,39 @@ permissions:
 > **Fork PRs:** GitHub restricts `pull-requests: write` for PRs from forks. PR Gate
 > degrades gracefully — it logs a warning and does not crash — but it cannot post the
 > comment on such PRs. Consider `pull_request_target` (with care) if you need this.
+
+---
+
+## Staying up to date
+
+A GitHub Action runs exactly the ref you pin — it never upgrades itself silently (that
+would be a supply-chain risk). PR Gate gives you three ways to stay current, from most to
+least automatic:
+
+**1. Pin the floating major tag.** Reference `uses: Fuzzy-Unlogic/prgate@v1` and you
+auto-follow every stable patch and minor release — no PRs to merge. (During the `-alpha`
+phase the `v1` tag does not exist yet; pin the exact pre-release tag until then.)
+
+**2. Let Dependabot open upgrade PRs.** If you pin an exact tag (or a SHA for stronger
+supply-chain safety), enable Dependabot's `github-actions` ecosystem and it opens a PR
+whenever a new PR Gate release is published. Copy
+[`docs/templates/dependabot.yml`](docs/templates/dependabot.yml) to `.github/dependabot.yml`:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+```
+
+**3. Built-in nudge.** On every run, PR Gate checks its own version against the latest
+release and, if you're behind, emits a **non-blocking** warning annotation (and appends a
+line to the PR comment when one is posted). It never fails the run, degrades silently on
+any network error, and skips consumers pinned to a floating tag like `@v1` (they already
+auto-update). Disable it with `version-check: false`. You can also **Watch → Custom →
+Releases** on the repo for manual notifications.
 
 ---
 
