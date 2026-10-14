@@ -1,0 +1,49 @@
+# Create vX.Y.Z when package.json's version lands on main (bump-then-tag order).
+# The tag push then drives release.yml, which builds dist/ and moves the major
+# tag. Tags only when the version is new, so unrelated edits and re-runs no-op.
+name: Tag on version bump
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check release token
+        id: guard
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          if [ -z "${RELEASE_PAT}" ]; then
+            echo "::warning::Release token not set; skipping auto-tag."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - name: Create matching tag when the version is new
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists; nothing to do."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${TAG}"
+          git push origin "refs/tags/${TAG}"
