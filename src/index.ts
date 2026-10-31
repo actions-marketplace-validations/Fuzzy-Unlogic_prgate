@@ -3,7 +3,7 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { evaluateBlocker } from './blocker';
 import { type CommentTarget, deleteStaleComment, renderComment, upsertComment } from './comment';
-import { ConfigError, type LoadResult, loadConfig } from './config';
+import { ConfigError, type LoadResult, loadConfig, loadConfigFromRef } from './config';
 import { type ChangedFile, matchProtected, normalizeStatus, withImplicitProtection } from './match';
 import { checkForUpdate } from './version-check';
 
@@ -19,9 +19,20 @@ async function run(): Promise<void> {
     : path.join(workspace, configPath);
   const configRelPath = path.relative(workspace, absoluteConfigPath).split(path.sep).join('/');
 
+  const pr = github.context.payload.pull_request;
+  const octokit = github.getOctokit(token);
+  const { owner, repo } = github.context.repo;
+
   let loaded: LoadResult | null;
   try {
-    loaded = loadConfig(absoluteConfigPath);
+    loaded = pr
+      ? await loadConfigFromRef(octokit, {
+          owner,
+          repo,
+          path: configRelPath,
+          ref: pr.base.sha,
+        })
+      : loadConfig(absoluteConfigPath);
   } catch (err) {
     if (err instanceof ConfigError) {
       core.setFailed(`PR Gate config error: ${err.message}`);
@@ -41,14 +52,11 @@ async function run(): Promise<void> {
   const config = loaded.config;
   const protectedGlobs = withImplicitProtection(config.protected, configRelPath);
 
-  const pr = github.context.payload.pull_request;
   if (!pr) {
     core.notice('PR Gate only runs on pull_request events. Nothing to do. Passing.');
     return;
   }
 
-  const octokit = github.getOctokit(token);
-  const { owner, repo } = github.context.repo;
   const prNumber = pr.number;
   const target: CommentTarget = { owner, repo, prNumber };
 

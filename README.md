@@ -50,7 +50,9 @@ replacement for code quality tools.
 On each pull request, PR Gate:
 
 1. Reads and validates `guardrails.prgate.json` at your repo root. Missing → it passes
-   silently (you haven't opted in).
+   silently (you haven't opted in). On `pull_request` the config is **always read from the
+   PR's base ref** through the GitHub API, so a PR cannot weaken the rules that judge it and
+   no `actions/checkout` step is needed.
 2. Compares the PR's changed file paths against your `protected` globs (minimatch syntax).
    The config file itself (`guardrails.prgate.json`, or whatever `config-path` points at)
    is **always guarded implicitly** — you never list it, and a PR can't quietly weaken,
@@ -105,7 +107,7 @@ content-level. The engine makes no language assumptions.
 | Input | Default | Description |
 |-------|---------|-------------|
 | `github-token` | `${{ github.token }}` | Token used to read the PR, post the comment, and verify labeler permissions. |
-| `config-path` | `guardrails.prgate.json` | Path to the config, relative to the repo root. |
+| `config-path` | `guardrails.prgate.json` | Path to the config, relative to the repo root. Read from the PR base ref on `pull_request`. |
 | `approval-label` | `prgate-approved` | Label a write-access user applies to unblock a hard-blocked PR. |
 | `version-check` | `true` | When `true`, warn (never fail) if a newer PR Gate release is available. See [Staying up to date](#staying-up-to-date). |
 

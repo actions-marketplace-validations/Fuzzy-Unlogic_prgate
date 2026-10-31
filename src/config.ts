@@ -122,3 +122,58 @@ export function loadConfig(filePath: string): LoadResult | null {
   }
   return parseConfig(raw);
 }
+
+export interface RefConfigSource {
+  owner: string;
+  repo: string;
+  path: string;
+  ref: string;
+}
+
+interface ContentsClient {
+  rest: {
+    repos: {
+      getContent: (params: RefConfigSource) => Promise<{ data: unknown }>;
+    };
+  };
+}
+
+/**
+ * Load config from a git ref through the GitHub contents API.
+ * Returns `null` when the file does not exist at that ref (project hasn't opted in → PASS silently).
+ * Callers pin `ref` to the PR base sha so a PR cannot weaken the rules that judge it.
+ *
+ * @throws {ConfigError} when the path is not a file, the API call fails, or the content is invalid.
+ */
+export async function loadConfigFromRef(
+  octokit: ContentsClient,
+  source: RefConfigSource,
+): Promise<LoadResult | null> {
+  let data: unknown;
+  try {
+    const res = await octokit.rest.repos.getContent({
+      owner: source.owner,
+      repo: source.repo,
+      path: source.path,
+      ref: source.ref,
+    });
+    data = res.data;
+  } catch (err) {
+    if ((err as { status?: number }).status === 404) {
+      return null;
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new ConfigError(`Could not read ${source.path} at ${source.ref}: ${detail}`);
+  }
+
+  const file = data as { type?: string; content?: string; encoding?: string };
+  if (
+    Array.isArray(data) ||
+    file?.type !== 'file' ||
+    typeof file.content !== 'string' ||
+    file.encoding !== 'base64'
+  ) {
+    throw new ConfigError(`${source.path} at ${source.ref} is not a readable file.`);
+  }
+  return parseConfig(Buffer.from(file.content, 'base64').toString('utf8'));
+}

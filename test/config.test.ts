@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { ConfigError, parseConfig } from '../src/config';
+import { describe, expect, it, vi } from 'vitest';
+import { ConfigError, loadConfigFromRef, parseConfig } from '../src/config';
+import { matchProtected, withImplicitProtection } from '../src/match';
 
 describe('parseConfig', () => {
   it('parses a full valid config', () => {
@@ -76,5 +77,68 @@ describe('parseConfig', () => {
   it('warns on unknown keys inside guardrails', () => {
     const { warnings } = parseConfig(JSON.stringify({ guardrails: { protected: [], mystery: 1 } }));
     expect(warnings.some((w) => w.includes('guardrails.mystery'))).toBe(true);
+  });
+});
+
+const source = { owner: 'o', repo: 'r', path: 'guardrails.prgate.json', ref: 'basesha' };
+
+function fileResponse(text: string) {
+  return {
+    data: { type: 'file', encoding: 'base64', content: Buffer.from(text).toString('base64') },
+  };
+}
+
+function clientReturning(getContent: (params: typeof source) => Promise<{ data: unknown }>) {
+  return { rest: { repos: { getContent } } };
+}
+
+describe('loadConfigFromRef', () => {
+  it('requests the file at the given ref and parses the decoded content', async () => {
+    const getContent = vi
+      .fn()
+      .mockResolvedValue(fileResponse(JSON.stringify({ guardrails: { protected: ['tests/**'] } })));
+    const result = await loadConfigFromRef(clientReturning(getContent), source);
+    expect(getContent).toHaveBeenCalledWith(source);
+    expect(result?.config.protected).toEqual(['tests/**']);
+  });
+
+  it('returns null when the file is absent at the ref (404)', async () => {
+    const getContent = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('Not Found'), { status: 404 }));
+    expect(await loadConfigFromRef(clientReturning(getContent), source)).toBeNull();
+  });
+
+  it('throws ConfigError on non-404 API errors', async () => {
+    const getContent = vi.fn().mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
+    await expect(loadConfigFromRef(clientReturning(getContent), source)).rejects.toThrow(
+      ConfigError,
+    );
+  });
+
+  it('throws ConfigError when the path is a directory', async () => {
+    const getContent = vi.fn().mockResolvedValue({ data: [{ type: 'file' }] });
+    await expect(loadConfigFromRef(clientReturning(getContent), source)).rejects.toThrow(
+      ConfigError,
+    );
+  });
+
+  it('judges a PR by the base config even when the PR empties its own protected list', async () => {
+    const baseConfig = JSON.stringify({ guardrails: { protected: ['.github/workflows/**'] } });
+    const getContent = vi.fn().mockResolvedValue(fileResponse(baseConfig));
+    const loaded = await loadConfigFromRef(clientReturning(getContent), source);
+    expect(getContent).toHaveBeenCalledWith(expect.objectContaining({ ref: 'basesha' }));
+    const globs = withImplicitProtection(loaded?.config.protected ?? [], source.path);
+    const matched = matchProtected(
+      [
+        { path: 'guardrails.prgate.json', status: 'MODIFIED' },
+        { path: '.github/workflows/ci.yml', status: 'MODIFIED' },
+      ],
+      globs,
+    );
+    expect(matched.map((m) => m.path)).toEqual([
+      'guardrails.prgate.json',
+      '.github/workflows/ci.yml',
+    ]);
   });
 });
